@@ -1,0 +1,12 @@
+{
+  "dest": "/mnt/tank/backups/webs",
+  "budget": 20,
+  "healthcheck_url": null,
+  "sites": [
+    {
+      "name": "ejemplo-com",
+      "url": "https://ejemplo.com/",
+      "secret": "PEGAR-AQUI-LA-CLAVE-DE-AJUSTES-NAS-BACKUP"
+    }
+  ]
+}
