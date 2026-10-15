@@ -1,6 +1,8 @@
 # NAS Backup Bridge
 
-Copias de seguridad completas de WordPress (base de datos + archivos) descargadas por el NAS de casa. Funciona en hostings que no controlo: solo hace falta poder instalar un plugin.
+Copias de seguridad completas de WordPress (base de datos + archivos) descargadas por el NAS de casa, con un **panel web** para ver el estado de cada web, hacer copias al momento, añadir webs, descargar copias y **restaurarlas**. Funciona en hostings que no controlo: solo hace falta poder instalar un plugin.
+
+Versión 1.1.0 (plugin) — ver [Novedades 1.1](#novedades-11).
 
 ```
  WordPress del cliente                         NAS (TrueNAS, cron 03:00)
@@ -137,6 +139,50 @@ Cada tabla empieza con `DROP TABLE IF EXISTS` + `CREATE TABLE`. Para restaurar s
 | `scan_errors` en `meta.json` | Carpetas/archivos sin permiso de lectura para PHP: corregir permisos en el hosting o excluirlos. |
 | Aviso "carpeta de trabajo dentro de la raíz web" | El hosting no permite escribir fuera de la web. Con Apache/LiteSpeed está protegida por `.htaccess`; con Nginx, comprobar que `/wp-content/uploads/nbb-*/` no se sirve. |
 
+## Novedades 1.1
+
+- **Panel web** (`nbb_panel.py` + `panel.html`): lista de webs con estado y cinta de los últimos 30 días, «Copiar ahora», añadir/pausar/quitar webs, puntos de restauración (snapshots ZFS), descargas en .zip y restauración guiada con registro en directo.
+- **Restauración directa** desde el NAS a la web (plugin 1.1). Desactivada por defecto: se permite en *Ajustes › NAS Backup › Restauraciones* de cada web.
+- CLI: `nbb_pull.py --config sites.json restore --site NOMBRE --source CARPETA [--no-db] [--no-files] [--keep-extra] [--wp-config] [--no-maintenance]`.
+
+## Cómo funciona una restauración
+
+1. **Punto de partida congelado.** Si se elige «Última copia», el panel hace un snapshot para que no cambie mientras se restaura.
+2. **Copia previa** (por defecto): copia el estado actual de la web y crea un snapshot `nbb-antes-<web>-<fecha>` que aparece como «Antes de restaurar». Restaurar ese punto deshace la restauración. Se borran solos a los 30 días.
+3. **Base de datos** importada en tablas temporales `nbbr_<hash>` junto a las reales: **la web sigue funcionando** mientras tanto. Solo se aceptan sentencias de nuestro propio volcado sobre esas tablas.
+4. **Archivos**: el plugin lista lo que hay ahora en la web y el NAS sube solo lo distinto (pequeños en lotes, grandes por trozos reanudables) y, si se marca, borra lo que no estaba en la copia. Las cachés y el propio plugin no se tocan; `wp-config.php` solo si se marca.
+5. **Cambio atómico**: un único `RENAME TABLE` pone las tablas restauradas en su sitio. Los ajustes del plugin (clave, permiso) se conservan. Si algo falla antes de este paso, la base de datos de la web no se ha tocado y las tablas temporales se borran.
+6. Fin del modo mantenimiento (visitantes ven «Volvemos en unos minutos»; usuarios con sesión ven la web), limpieza de cachés y comprobación de que la portada responde.
+
+Salvaguardas: la copia debe ser de la misma URL que la web (no se restaura una web encima de otra), hay que escribir el nombre de la web para confirmar, y solo un trabajo por web a la vez (comparte bloqueo con la copia nocturna). Tablas que existen en la web pero no en la copia se dejan como están.
+
+Si la web está tan rota que el plugin no responde (error fatal de PHP), la restauración directa no es posible: usar **Descargar** en el panel y subirlo por FTP + phpMyAdmin.
+
+## Panel: instalación en el NAS
+
+El panel se ejecuta en el propio TrueNAS como root (necesita leer las copias y crear snapshots ZFS), escucha solo en `127.0.0.1:8765` y se publica con Tailscale Serve: no es accesible desde la red local ni desde internet.
+
+1. Copiar `nbb_pull.py`, `nbb_panel.py` y `panel.html` a `/mnt/apps/config/nbb/` (junto a `sites.json`).
+2. Fijar la contraseña (se guarda como hash en `panel.json`, `chmod 600`):
+   ```bash
+   sudo python3 /mnt/apps/config/nbb/nbb_panel.py --config /mnt/apps/config/nbb/sites.json set-password
+   ```
+3. Arrancarlo como servicio (se reinicia solo si se cae):
+   ```bash
+   sudo systemd-run --unit=nbb-panel -p Restart=always -p RestartSec=5 \
+     /usr/bin/python3 /mnt/apps/config/nbb/nbb_panel.py --config /mnt/apps/config/nbb/sites.json
+   sudo systemctl status nbb-panel
+   ```
+4. Para que arranque con el NAS: *System › Advanced Settings › Init/Shutdown Scripts › Add* — Type **Command**, When **Post Init**, Command: la línea `systemd-run …` de arriba (sin `sudo`).
+5. Publicarlo por HTTPS en el tailnet: en *Apps › tailscale › Workloads › terminal*:
+   ```bash
+   tailscale serve --bg --https=8443 http://localhost:8765
+   ```
+   Panel: `https://nas.<tailnet>.ts.net:8443`.
+6. Tras actualizar los archivos: `sudo systemctl restart nbb-panel`.
+
+Seguridad del panel: contraseña con PBKDF2 (600.000 iteraciones), cookie de sesión firmada `HttpOnly; Secure; SameSite=Strict` de 12 h, bloqueo tras 10 intentos fallidos en 10 min, cabecera anti-CSRF obligatoria en cada acción, CSP estricta. Solo crea y borra snapshots que empiezan por `nbb-`; los de las tareas programadas no se tocan. Las claves de las webs nunca se envían al navegador.
+
 ## Desarrollo y pruebas
 
 Probado con WordPress 7.1.3 / PHP 8.3 / MariaDB (requisitos mínimos declarados: WP 5.6, PHP 7.4), con `max_execution_time=15`:
@@ -145,3 +191,6 @@ Probado con WordPress 7.1.3 / PHP 8.3 / MariaDB (requisitos mínimos declarados:
 - Reanudación tras matar el proceso PHP 14 veces durante una copia con una tabla de 214.000 filas.
 - Seguridad: firma incorrecta, marca de tiempo antigua, `..`, rutas absolutas, symlink hacia `/etc`, raíz inexistente, nombre de artefacto manipulado → todo rechazado; bloqueo 429 tras 20 fallos.
 - Permalinks desactivados (`/wp-json` devuelve la portada) → el cliente pasa solo a `?rest_route=`.
+- **Restauración** (con `post_max_size=2M` para forzar trozos pequeños): web dañada a propósito (entradas borradas, opción cambiada, 50.000 filas borradas, archivo PHP añadido, archivos modificados y borrados, vídeo de 41 MB borrado, carpeta vacía eliminada) → restaurada: tablas idénticas a la copia (`CHECKSUM TABLE`; en `wp_options` solo difieren transitorios/cron que WordPress regenera), `diff -r` idéntico en archivos, fechas de modificación conservadas, sin tablas temporales ni modo mantenimiento residuales, clave del plugin conservada.
+- Fallo a mitad de importación (volcado corrupto) → abortada sin tocar la web; restauración rechazada si la web no la permite.
+- Desde el panel: restaurar una diaria con copia previa y luego deshacer con el punto «Antes de restaurar» → la web vuelve exactamente al estado anterior. Descargas .zip verificadas.

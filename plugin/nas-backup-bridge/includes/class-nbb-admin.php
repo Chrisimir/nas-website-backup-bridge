@@ -40,6 +40,7 @@ class NBB_Admin {
 		$patterns = array_values( array_filter( array_map( 'trim', preg_split( '/\r\n|\r|\n/', $raw ) ), 'strlen' ) );
 		update_option( NBB_Settings::OPT_EXCLUDES, $patterns, false );
 		update_option( NBB_Settings::OPT_ALL_TBL, ! empty( $_POST['nbb_all_tables'] ), false );
+		update_option( NBB_Restore::OPT_ALLOW, ! empty( $_POST['nbb_allow_restore'] ), false );
 		self::back( 'saved' );
 	}
 
@@ -161,6 +162,15 @@ class NBB_Admin {
 				<p><label><input type="checkbox" name="nbb_all_tables" value="1" <?php checked( NBB_Settings::all_tables() ); ?>> Copiar todas las tablas de la base de datos (no solo las de este WordPress)</label></p>
 				<p><strong>Exclusiones</strong> — una por línea, rutas relativas a la instalación, admiten <code>*</code>. Una carpeta excluida se omite entera.</p>
 				<textarea name="nbb_excludes" rows="12" style="width:100%;max-width:860px;font-family:monospace"><?php echo esc_textarea( implode( "\n", NBB_Settings::excludes() ) ); ?></textarea>
+				<h2>Restauraciones</h2>
+				<p><label><input type="checkbox" name="nbb_allow_restore" value="1" <?php checked( NBB_Restore::allowed() ); ?> <?php disabled( defined( 'NBB_ALLOW_RESTORE' ) ); ?>> Permitir que el NAS restaure copias en esta web (base de datos y archivos)</label></p>
+				<p class="description" style="max-width:860px">Con esta opción, quien tenga la clave puede sobrescribir la web entera. Actívala solo si la clave está guardada de forma segura. Durante una restauración, los visitantes ven una página de mantenimiento; los usuarios con sesión iniciada siguen viendo la web.</p>
+				<?php
+				$last_restore = get_option( NBB_Restore::OPT_LAST, null );
+				if ( is_array( $last_restore ) ) :
+					?>
+					<p>Última restauración: <?php echo esc_html( wp_date( 'Y-m-d H:i', (int) $last_restore['finished'] ) . ( $last_restore['source'] ? ' — desde ' . $last_restore['source'] : '' ) ); ?></p>
+				<?php endif; ?>
 				<p><button class="button button-primary">Guardar</button></p>
 			</form>
 		</div>

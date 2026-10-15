@@ -19,6 +19,9 @@ Uso:
     nbb_pull.py --config sites.json                 # copia todos los sitios
     nbb_pull.py --config sites.json --site NOMBRE   # solo uno
     nbb_pull.py --config sites.json check           # prueba la conexión y la firma
+    nbb_pull.py --config sites.json restore --site NOMBRE --source RUTA [--no-db] [--no-files]
+                [--keep-extra] [--wp-config] [--no-maintenance]
+                                                    # restaura una copia (RUTA = carpeta "current")
 """
 
 import argparse
@@ -28,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -54,6 +58,7 @@ DEFAULTS = {
     "big_file_bytes": 32 * 1024 * 1024,  # más grande -> descarga individual reanudable
     "retries": 4,
     "healthcheck_url": None,
+    "restore_body_bytes": 4 * 1024 * 1024,  # tamaño máximo de cada petición al restaurar
 }
 
 
@@ -118,7 +123,7 @@ class Client:
         url = self.base + "?rest_route=" + urllib.parse.quote(route, safe="/")
         return url + ("&" + query if query else "")
 
-    def open(self, method, route, params=None, body=None, headers=None):
+    def open(self, method, route, params=None, body=None, headers=None, content_type="application/json"):
         """Abre la petición y devuelve la respuesta (sin leer). Reintenta errores de red y 5xx."""
         params = params or {}
         modes = [self.mode] if self.mode != "auto" else ["pretty", "query"]
@@ -134,7 +139,7 @@ class Client:
                 req.add_header("X-NBB-Signature", sig)
                 req.add_header("Accept-Encoding", "identity")
                 if body is not None:
-                    req.add_header("Content-Type", "application/json")
+                    req.add_header("Content-Type", content_type)
                 for k, v in (headers or {}).items():
                     req.add_header(k, v)
                 try:
@@ -166,9 +171,13 @@ class Client:
                 time.sleep(min(60, 5 * (2 ** attempt)))
         raise last_exc or NbbError("Petición fallida")
 
-    def json(self, method, route, params=None, body=None):
-        raw = None if body is None else json.dumps(body).encode()
-        with self.open(method, route, params, raw) as resp:
+    def json(self, method, route, params=None, body=None, raw=None):
+        """body: objeto a enviar como JSON; raw: bytes a enviar tal cual (octet-stream)."""
+        if raw is not None:
+            ctx = self.open(method, route, params, raw, content_type="application/octet-stream")
+        else:
+            ctx = self.open(method, route, params, None if body is None else json.dumps(body).encode())
+        with ctx as resp:
             data = resp.read()
         try:
             return json.loads(data.decode("utf-8"))
@@ -270,13 +279,21 @@ class SiteBackup:
         st = self.client.json("GET", "/nbb/v1/status")
         if st.get("protocol") != PROTOCOL:
             raise NbbError("Versión de protocolo incompatible: %s" % st.get("protocol"))
+        try:
+            os.makedirs(self.meta_dir, exist_ok=True)
+            write_json(os.path.join(self.meta_dir, "status.json"), dict(st, checked=int(time.time())))
+        except OSError:
+            pass
         skew = abs(int(st.get("server_time", time.time())) - int(time.time()))
         if skew > 120:
             self.stats["warnings"].append("Diferencia horaria con el servidor: %ss" % skew)
         return st
 
-    def prepare(self):
-        job = self.client.json("POST", "/nbb/v1/jobs", {"force": "1"})
+    def prepare(self, skip_db=False):
+        params = {"force": "1"}
+        if skip_db:
+            params["skip_db"] = "1"
+        job = self.client.json("POST", "/nbb/v1/jobs", params)
         job_id = job["id"]
         log("[%s] copia %s creada; preparando en el servidor…", self.name, job_id)
         deadline = time.time() + self.cfg["job_timeout"]
@@ -612,6 +629,349 @@ class SiteBackup:
 
 
 # --------------------------------------------------------------------------- #
+# Restauración
+# --------------------------------------------------------------------------- #
+
+TMP_PREFIX = "nbbr_"
+MIN_BODY = 64 * 1024
+
+
+def temp_table_name(table):
+    return TMP_PREFIX + hashlib.sha1(table.encode()).hexdigest()[:12]
+
+
+def quote_ident(name):
+    return b"`" + name.encode().replace(b"`", b"``") + b"`"
+
+
+def iter_sql_statements(path):
+    """Sentencias de un volcado del plugin (una por línea salvo CREATE TABLE, que ocupa varias)."""
+    buf = []
+    with gzip.open(path, "rb") as f:
+        for line in f:
+            if not buf and (line.startswith(b"-- ") or not line.strip()):
+                continue
+            buf.append(line)
+            if line.rstrip(b"\r\n").endswith(b";"):
+                stmt = b"".join(buf).rstrip(b"\r\n")
+                buf = []
+                yield stmt[:-1]
+    if buf and b"".join(buf).strip():
+        raise NbbError("Volcado incompleto: %s" % os.path.basename(path))
+
+
+def table_of_dump(path):
+    with gzip.open(path, "rb") as f:
+        for _ in range(5):
+            line = f.readline()
+            if line.startswith(b"-- Table: "):
+                return line[10:].rstrip(b"\r\n").decode("utf-8")
+    raise NbbError("No se reconoce la tabla de %s" % os.path.basename(path))
+
+
+class SiteRestore(SiteBackup):
+    """Restaura en la web una copia guardada en el NAS (carpeta con files/, db/, manifest, meta)."""
+
+    def __init__(self, site, cfg, dest):
+        super().__init__(site, cfg, dest)
+        self.body_limit = cfg["restore_body_bytes"]
+        self.session = None
+        self.protected = None
+        self.wp_config = False
+        self.rstats = {"tables": 0, "statements": 0, "uploaded_files": 0, "uploaded_bytes": 0,
+                       "deleted_files": 0, "created_dirs": 0, "deleted_dirs": 0, "errors": []}
+
+    # ---- utilidades ------------------------------------------------------ #
+    def post(self, route, params=None, body=None, raw=None):
+        return self.client.json("POST", "/nbb/v1/restore/%s/%s" % (self.session, route), params, body, raw)
+
+    def adaptive(self, send, items, size_of, label):
+        """Envía 'items' en lotes de hasta self.body_limit bytes; si el servidor responde 413, reduce el lote."""
+        i = 0
+        while i < len(items):
+            batch, size = [], 0
+            while i + len(batch) < len(items):
+                s = size_of(items[i + len(batch)])
+                if batch and size + s > self.body_limit:
+                    break
+                batch.append(items[i + len(batch)])
+                size += s
+            try:
+                send(batch)
+            except HttpError as e:
+                if e.status == 413 and (self.body_limit > MIN_BODY or len(batch) > 1):
+                    self.body_limit = max(MIN_BODY, self.body_limit // 2)
+                    log("[%s]   el servidor rechaza peticiones grandes; bajando a %d KB", self.name, self.body_limit // 1024)
+                    continue
+                raise HttpError(e.status, json.dumps({"message": "%s: %s" % (label, e)}))
+            i += len(batch)
+
+    def want(self, e):
+        r, p = e["r"], e["p"]
+        if self.protected and r == self.protected["r"] and (p == self.protected["p"] or p.startswith(self.protected["p"] + "/")):
+            return False
+        if not self.wp_config and ((r == "site" and p == "wp-config.php") or r == "parent"):
+            return False
+        return True
+
+    # ---- base de datos --------------------------------------------------- #
+    def import_db(self, source):
+        db_dir = os.path.join(source, "db")
+        files = sorted(fn for fn in os.listdir(db_dir) if fn.endswith(".sql.gz"))
+        tables, views = [], None
+        for fn in files:
+            path = os.path.join(db_dir, fn)
+            if fn.startswith("9999-"):
+                views = path
+                continue
+            table = table_of_dump(path)
+            for attempt in range(3):
+                try:
+                    n = self.import_table(path, table)
+                    break
+                except NbbError as err:
+                    if attempt == 2 or (isinstance(err, HttpError) and 400 <= err.status < 500):
+                        raise NbbError("No se pudo importar %s: %s" % (table, err))
+                    log("[%s]   reintentando %s (%s)", self.name, table, err)
+                    time.sleep(3)
+            tables.append(table)
+            self.rstats["tables"] += 1
+            self.rstats["statements"] += n
+            log("[%s]   tabla %s importada (%d sentencias)", self.name, table, n)
+        return tables, views
+
+    def import_table(self, path, table):
+        q = quote_ident(table)
+        tmp = b"`" + temp_table_name(table).encode() + b"`"
+        prefixes = (b"DROP TABLE IF EXISTS ", b"CREATE TABLE ", b"INSERT INTO ")
+        stmts = []
+        for stmt in iter_sql_statements(path):
+            for pfx in prefixes:
+                if stmt.startswith(pfx + q):
+                    stmt = pfx + tmp + stmt[len(pfx) + len(q):]
+                    if pfx == b"CREATE TABLE ":
+                        stmt = re.sub(rb"CONSTRAINT `(?:[^`]|``)+` FOREIGN KEY", b"FOREIGN KEY", stmt)
+                    break
+            else:
+                if not stmt.startswith(b"SET "):
+                    raise NbbError("Sentencia inesperada en el volcado de %s" % table)
+            stmts.append(stmt)
+        self.send_statements(stmts, "Importando %s" % table)
+        return len(stmts)
+
+    def send_statements(self, stmts, label):
+        def send(batch):
+            raw = b"".join(str(len(s)).encode() + b"\n" + s for s in batch)
+            self.post("sql", raw=raw)
+        self.adaptive(send, stmts, lambda s: len(s) + 12, label)
+
+    # ---- archivos -------------------------------------------------------- #
+    def live_manifest(self):
+        job_id, job = self.prepare(skip_db=True)
+        staging = os.path.join(self.meta_dir, "restore-staging")
+        shutil.rmtree(staging, ignore_errors=True)
+        os.makedirs(staging)
+        try:
+            arts = [a for a in job["artifacts"] if a["name"] == "manifest.ndjson.gz"]
+            self.download_artifacts(job_id, arts, staging)
+            files, dirs, _ = self.read_manifest(os.path.join(staging, "manifest.ndjson.gz"))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+            try:
+                self.client.json("POST", "/nbb/v1/jobs/%s/complete" % job_id)
+            except NbbError:
+                pass
+        return files, dirs
+
+    def restore_files(self, source, live_files, live_dirs, delete_extra):
+        src_files, src_dirs, _ = self.read_manifest(os.path.join(source, "manifest.ndjson.gz"))
+        src_root = os.path.join(source, "files")
+        k = self.key
+        src_files = {key: e for key, e in src_files.items() if self.want(e)}
+        live_files = {key: e for key, e in live_files.items() if self.want(e)}
+        src_dir_keys = {k(d["r"], d["p"]) for d in src_dirs if self.want(d)}
+        live_dir_keys = {k(d["r"], d["p"]) for d in live_dirs if self.want(d)}
+
+        upload = [e for key, e in src_files.items()
+                  if key not in live_files or live_files[key]["s"] != e["s"] or live_files[key]["m"] != e["m"]]
+        extra = [e for key, e in live_files.items() if key not in src_files] if delete_extra else []
+        new_dirs = sorted((d for d in src_dirs if self.want(d) and k(d["r"], d["p"]) not in live_dir_keys),
+                          key=lambda d: d["p"].count("/"))
+        old_dirs = sorted((d for d in live_dirs if self.want(d) and k(d["r"], d["p"]) not in src_dir_keys),
+                          key=lambda d: -d["p"].count("/")) if delete_extra else []
+        log("[%s] archivos: %d a subir (%.1f MB), %d a borrar, %d iguales", self.name, len(upload),
+            sum(e["s"] for e in upload) / 1e6, len(extra), len(src_files) - len(upload))
+
+        def collect(res):
+            for err in res.get("errors", []):
+                self.rstats["errors"].append("%s: %s" % (err.get("p"), err.get("e")))
+
+        # 1. borrar lo que sobra (deja sitio a cambios archivo↔carpeta)
+        def send_delete(batch):
+            res = self.post("delete", body={"files": [{"r": e["r"], "p": e["p"]} for e in batch]})
+            self.rstats["deleted_files"] += res.get("deleted", 0)
+            collect(res)
+        for i in range(0, len(extra), 500):
+            send_delete(extra[i:i + 500])
+
+        # 2. carpetas nuevas (incluidas las vacías)
+        for i in range(0, len(new_dirs), 500):
+            res = self.post("mkdir", body={"dirs": [{"r": d["r"], "p": d["p"]} for d in new_dirs[i:i + 500]]})
+            self.rstats["created_dirs"] += res.get("created", 0)
+            collect(res)
+
+        # 3. archivos: pequeños en lotes, grandes por trozos
+        big = [e for e in upload if e["s"] > self.body_limit // 2]
+        small = sorted((e for e in upload if e["s"] <= self.body_limit // 2), key=lambda e: (e["r"], e["p"]))
+        done, total, last = 0, sum(e["s"] for e in upload), time.time()
+
+        def send_pack(batch):
+            nonlocal done, last
+            parts = [b"NBBUP1\n"]
+            for e in batch:
+                with open(safe_join(src_root, e["r"], e["p"]), "rb") as f:
+                    data = f.read()
+                hdr = {"r": e["r"], "p": e["p"], "s": len(data), "m": e["m"]}
+                parts.append(json.dumps(hdr, ensure_ascii=False).encode() + b"\n" + data)
+            parts.append(b"END\n")
+            res = self.post("pack", raw=b"".join(parts))
+            self.rstats["uploaded_files"] += res.get("written", 0)
+            self.rstats["uploaded_bytes"] += sum(e["s"] for e in batch)
+            collect(res)
+            done += sum(e["s"] for e in batch)
+            if time.time() - last > 15:
+                log("[%s]   %.1f/%.1f MB subidos", self.name, done / 1e6, total / 1e6)
+                last = time.time()
+
+        self.adaptive(send_pack, small, lambda e: e["s"] + len(e["p"]) + 80, "Subiendo archivos")
+        for e in big:
+            self.upload_big(src_root, e)
+            done += e["s"]
+
+        # 4. carpetas que sobran (solo si quedan vacías), de la más profunda a la más alta
+        for i in range(0, len(old_dirs), 500):
+            res = self.post("delete", body={"dirs": [{"r": d["r"], "p": d["p"]} for d in old_dirs[i:i + 500]]})
+            self.rstats["deleted_dirs"] += res.get("deleted", 0)
+
+    def upload_big(self, src_root, e):
+        path = safe_join(src_root, e["r"], e["p"])
+        size = os.path.getsize(path)
+        offset, attempts = 0, 0
+        with open(path, "rb") as f:
+            while True:
+                f.seek(offset)
+                data = f.read(self.body_limit)
+                final = offset + len(data) >= size
+                params = {"r": e["r"], "p": e["p"], "offset": str(offset)}
+                if final:
+                    params.update({"final": "1", "mtime": str(e["m"])})
+                try:
+                    self.post("chunk", params, raw=data)
+                except HttpError as err:
+                    attempts += 1
+                    if err.status == 413 and self.body_limit > MIN_BODY:
+                        self.body_limit = max(MIN_BODY, self.body_limit // 2)
+                        continue
+                    if err.status == 409 and attempts < 5:
+                        try:
+                            offset = int(json.loads(err.body).get("data", {}).get("size", 0))
+                        except (ValueError, AttributeError):
+                            offset = 0
+                        continue
+                    raise NbbError("Subiendo %s: %s" % (e["p"], err))
+                offset += len(data)
+                if final:
+                    break
+        self.rstats["uploaded_files"] += 1
+        self.rstats["uploaded_bytes"] += size
+
+    # ---- orquestación ---------------------------------------------------- #
+    def restore(self, source, do_db=True, do_files=True, delete_extra=True, wp_config=False,
+                maintenance=True, label=""):
+        started = time.time()
+        source = os.path.abspath(source)
+        if not os.path.isfile(os.path.join(source, "meta.json")):
+            raise NbbError("La carpeta de origen no es una copia válida: %s" % source)
+        if not (do_db or do_files):
+            raise NbbError("No hay nada que restaurar (ni base de datos ni archivos)")
+        with open(os.path.join(source, "meta.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        self.wp_config = wp_config
+        os.makedirs(self.meta_dir, exist_ok=True)
+        lock = open(os.path.join(self.meta_dir, "lock"), "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise NbbError("Hay una copia o restauración en curso para este sitio")
+        result = {"site": self.name, "ok": False, "source": label or source,
+                  "backup_date": meta.get("finished"), "db": do_db, "files": do_files,
+                  "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        try:
+            st = self.check()
+            if not st.get("restore_allowed"):
+                raise NbbError("La web no permite restauraciones. Actívalas en Ajustes › NAS Backup "
+                               "(plugin 1.1 o superior).")
+            if st.get("site_url", "").rstrip("/") != (meta.get("site_url") or "").rstrip("/"):
+                raise NbbError("La copia es de %s y la web es %s: no se restaura en otra web"
+                               % (meta.get("site_url"), st.get("site_url")))
+            self.protected = st.get("plugin_path")
+            if st.get("max_body"):
+                self.body_limit = max(MIN_BODY, min(self.body_limit, int(st["max_body"] * 0.7)))
+            log("[%s] restaurando copia del %s (%s%s)", self.name, meta.get("finished"),
+                "base de datos" if do_db else "", " + archivos" if do_db and do_files else ("archivos" if do_files else ""))
+
+            live = self.live_manifest() if do_files else None
+            sess = self.client.json("POST", "/nbb/v1/restore", {"maintenance": "1"} if maintenance else {})
+            self.session = sess["id"]
+            try:
+                tables, views = ([], None)
+                if do_db:
+                    log("[%s] importando la base de datos en tablas temporales…", self.name)
+                    tables, views = self.import_db(source)
+                if do_files:
+                    log("[%s] restaurando archivos…", self.name)
+                    self.restore_files(source, live[0], live[1], delete_extra)
+                if do_db:
+                    log("[%s] activando la base de datos restaurada (%d tablas)…", self.name, len(tables))
+                    self.post("swap", body={"tables": tables})
+                    if views:
+                        self.send_statements(list(iter_sql_statements(views)), "Vistas")
+                self.post("finish", body={}, params={"source": label or meta.get("finished", "")})
+            except BaseException:
+                try:
+                    self.post("abort", body={})
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
+            result["ok"] = True
+            result["site_http"] = self.probe_home(st.get("home_url") or st.get("site_url"))
+        except Exception as err:  # noqa: BLE001
+            result["error"] = str(err)
+            raise
+        finally:
+            result.update(self.rstats)
+            result["errors"] = result["errors"][:200]
+            result["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            result["duration_s"] = round(time.time() - started, 1)
+            write_json(os.path.join(self.root, "last_restore.json"), result)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
+        return result
+
+    def probe_home(self, url):
+        if not url:
+            return None
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=30, context=self.client.ctx) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:  # noqa: BLE001
+            return None
+
+
+# --------------------------------------------------------------------------- #
 
 def ping(url, ok, message):
     if not url:
@@ -639,12 +999,41 @@ def load_config(path):
 
 def main():
     ap = argparse.ArgumentParser(description="Copias de WordPress hacia el NAS (NAS Backup Bridge)")
-    ap.add_argument("command", nargs="?", default="run", choices=["run", "check"])
+    ap.add_argument("command", nargs="?", default="run", choices=["run", "check", "restore"])
     ap.add_argument("--config", required=True)
     ap.add_argument("--site", action="append", help="Solo este sitio (se puede repetir)")
+    ap.add_argument("--source", help="restore: carpeta de la copia (la que contiene meta.json)")
+    ap.add_argument("--label", default="", help="restore: descripción del origen para el registro")
+    ap.add_argument("--no-db", action="store_true", help="restore: no restaurar la base de datos")
+    ap.add_argument("--no-files", action="store_true", help="restore: no restaurar archivos")
+    ap.add_argument("--keep-extra", action="store_true", help="restore: no borrar archivos que no estén en la copia")
+    ap.add_argument("--wp-config", action="store_true", help="restore: restaurar también wp-config.php")
+    ap.add_argument("--no-maintenance", action="store_true", help="restore: no mostrar página de mantenimiento")
     args = ap.parse_args()
 
     cfg, sites = load_config(args.config)
+    if args.command == "restore":
+        if not args.site or len(args.site) != 1 or not args.source:
+            print("restore necesita exactamente un --site y --source", file=sys.stderr)
+            return 2
+        site = next((s for s in sites if s["name"] == args.site[0]), None)
+        if not site:
+            print("Sitio no encontrado: %s" % args.site[0], file=sys.stderr)
+            return 2
+        try:
+            res = SiteRestore(site, cfg, cfg["dest"]).restore(
+                args.source, do_db=not args.no_db, do_files=not args.no_files,
+                delete_extra=not args.keep_extra, wp_config=args.wp_config,
+                maintenance=not args.no_maintenance, label=args.label)
+        except Exception as err:  # noqa: BLE001
+            print("[%s] ERROR en la restauración: %s" % (args.site[0], err), file=sys.stderr, flush=True)
+            return 1
+        log("[%s] restauración completada en %ss — %d tablas, %d archivos subidos (%.1f MB), %d borrados; la web responde %s",
+            args.site[0], res["duration_s"], res["tables"], res["uploaded_files"], res["uploaded_bytes"] / 1e6,
+            res["deleted_files"], res.get("site_http"))
+        for e in res["errors"][:20]:
+            log("    aviso: %s", e)
+        return 0
     if args.site:
         sites = [s for s in sites if s["name"] in args.site]
         if not sites:

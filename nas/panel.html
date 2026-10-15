@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copias de webs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #E9EDF1;
+  --surface: #F8FAFB;
+  --raised: #FFFFFF;
+  --ink: #16222D;
+  --muted: #5B6B79;
+  --faint: #A9B5C0;
+  --line: #CED6DE;
+  --ok: #2E7D5B;
+  --warn: #A8720F;
+  --bad: #B23A3A;
+  --accent: #2552B8;
+  --accent-ink: #FFFFFF;
+  --focus: #2552B8;
+  --radius-s: 4px;
+  --radius-m: 8px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10161C; --surface: #172029; --raised: #1D2731; --ink: #E2E8EE; --muted: #93A2B0;
+    --faint: #4A5867; --line: #2A3541; --ok: #4FB386; --warn: #D9A441; --bad: #E06A6A;
+    --accent: #6E95F0; --accent-ink: #0E1620; --focus: #8FAEF5; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+button, input, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.hidden { display: none !important; }
+
+/* ---- botones ---- */
+.btn {
+  display: inline-flex; align-items: center; gap: .4em; border: 1px solid var(--line);
+  background: var(--raised); padding: .45em .9em; border-radius: var(--radius-s); cursor: pointer;
+  font-weight: 500; white-space: nowrap; text-decoration: none; color: var(--ink);
+}
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn-quiet { border-color: transparent; background: transparent; color: var(--muted); padding-inline: .5em; }
+.btn-quiet:hover { color: var(--ink); border-color: transparent; text-decoration: underline; }
+
+/* ---- login ---- */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login form { width: min(360px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); padding: 28px; }
+.login h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+.login p { margin: 0 0 20px; color: var(--muted); }
+
+/* ---- estructura ---- */
+.app { max-width: 1280px; margin: 0 auto; padding: 28px 24px 64px; }
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+.top h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
+.summary { margin: 4px 0 0; color: var(--muted); max-width: 64ch; }
+.top-actions { display: flex; gap: 8px; }
+
+.layout { display: grid; grid-template-columns: 1fr; gap: 20px; align-items: start; }
+@media (min-width: 1100px) { .layout.with-detail { grid-template-columns: minmax(0, 1fr) 460px; } }
+
+/* ---- lista de webs ---- */
+.sites { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
+.sites-head, .site {
+  display: grid; align-items: center; gap: 16px;
+  grid-template-columns: minmax(170px, 1.3fr) minmax(130px, 1fr) minmax(120px, .8fr) 186px auto;
+  padding: 12px 18px;
+}
+.sites-head { color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); padding-block: 9px; }
+.site { border-top: 1px solid var(--line); cursor: pointer; position: relative; }
+.site:first-of-type { border-top: 0; }
+.site:hover { background: var(--raised); }
+.site.selected { background: var(--raised); box-shadow: inset 3px 0 0 var(--accent); }
+.site.disabled { opacity: .55; }
+.site-name { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.site-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-url { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--faint); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.dot.run { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dot.run { animation: none; } }
+.when strong { font-weight: 500; display: block; }
+.when small, .size small { color: var(--muted); font-size: 13px; display: block; }
+.state-bad { color: var(--bad); }
+.state-warn { color: var(--warn); }
+
+/* ---- cinta de 30 días: lo característico del panel ---- */
+.ribbon { display: flex; align-items: flex-end; gap: 2px; height: 26px; }
+.ribbon i { display: block; width: 4px; height: 3px; border-radius: 1px; background: var(--line); }
+.ribbon i.has { height: 14px; background: var(--muted); }
+.ribbon i.month { height: 22px; background: var(--ink); }
+.ribbon i.pre { height: 14px; background: var(--warn); }
+.ribbon i.today.has { background: var(--ok); }
+.ribbon i.today.fail { height: 14px; background: var(--bad); }
+.ribbon-legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.ribbon-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ribbon-legend i { display: inline-block; width: 4px; height: 12px; border-radius: 1px; }
+
+.empty { padding: 40px 24px; text-align: center; color: var(--muted); }
+.empty strong { display: block; color: var(--ink); font-size: 17px; margin-bottom: 6px; }
+
+@media (min-width: 1100px) {
+  .with-detail .sites-head, .with-detail .site { grid-template-columns: minmax(140px, 1.2fr) minmax(110px, 1fr) 182px auto; }
+  .with-detail .size, .with-detail .sites-head .h-size { display: none; }
+}
+@media (max-width: 820px) {
+  .sites-head { display: none; }
+  .site { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .site .size { display: none; }
+  .site .ribbon-cell { grid-column: 1 / -1; }
+  .site .row-actions { grid-row: 1; grid-column: 2; }
+}
+
+/* ---- detalle ---- */
+.detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); }
+@media (min-width: 1100px) { .detail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; } }
+@media (max-width: 1099px) {
+  .detail { position: fixed; inset: 0; z-index: 20; border-radius: 0; overflow: auto; border: 0; }
+}
+.detail-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.detail-head h2 { margin: 0; font-size: 20px; font-weight: 600; word-break: break-word; }
+.detail-head a { font-size: 14px; }
+.section { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.section:last-child { border-bottom: 0; }
+.section h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; font-size: 14px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.alert { border-left: 3px solid var(--bad); padding: 8px 12px; background: var(--raised); margin: 0 0 10px; font-size: 14px; }
+.alert.warn { border-left-color: var(--warn); }
+
+.points { list-style: none; margin: 0; padding: 0; }
+.point { border-top: 1px solid var(--line); padding: 10px 0; }
+.point:first-child { border-top: 0; padding-top: 0; }
+.point-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.point-date { font-weight: 500; }
+.point-meta { color: var(--muted); font-size: 13px; }
+.tag { display: inline-block; font-size: 12px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; vertical-align: 1px; }
+.tag.monthly { border-color: var(--ink); color: var(--ink); }
+.tag.pre { border-color: var(--warn); color: var(--warn); }
+.tag.current { border-color: var(--ok); color: var(--ok); }
+.downloads { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.downloads a { margin-right: 10px; }
+
+.restore-form { margin-top: 10px; padding: 14px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-s); }
+.restore-form fieldset { border: 0; margin: 0 0 10px; padding: 0; }
+.restore-form legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0; font-size: 14px; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.check small { display: block; color: var(--muted); }
+label.field { display: block; font-size: 14px; margin: 10px 0 4px; }
+input[type=text], input[type=password], input[type=url], textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface);
+}
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+.tasks { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.tasks li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.tasks button { all: unset; cursor: pointer; color: var(--accent); }
+.tasks button:focus-visible { outline: 2px solid var(--focus); }
+.log {
+  margin: 10px 0 0; max-height: 300px; overflow: auto; background: var(--bg); border-radius: var(--radius-s);
+  padding: 10px 12px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
+}
+
+/* ---- diálogo ---- */
+dialog { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 0; width: min(560px, calc(100% - 32px)); background: var(--surface); color: var(--ink); }
+dialog::backdrop { background: rgba(10, 18, 26, .45); }
+dialog form { padding: 22px; }
+dialog h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+.tabs { display: flex; gap: 4px; margin: 14px 0 4px; }
+.tabs button { border: 1px solid var(--line); background: transparent; padding: .3em .8em; border-radius: var(--radius-s); cursor: pointer; }
+.tabs button[aria-selected=true] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.form-error { color: var(--bad); font-size: 14px; margin: 10px 0 0; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--surface);
+  padding: 10px 16px; border-radius: var(--radius-s); z-index: 50; max-width: calc(100% - 32px);
+}
+@media (max-width: 600px) { .app { padding: 18px 16px 48px; } .top h1 { font-size: 24px; } }
+</style>
+</head>
+<body>
+
+<div id="login" class="login hidden">
+  <form id="login-form">
+    <h1>Copias de webs</h1>
+    <p>Panel del NAS. Introduce la contraseña del panel.</p>
+    <label class="field" for="pw">Contraseña</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <p id="login-error" class="form-error hidden"></p>
+    <div class="actions"><button class="btn btn-primary" type="submit">Entrar</button></div>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="top">
+    <div>
+      <h1>Copias de webs</h1>
+      <p id="summary" class="summary"></p>
+    </div>
+    <div class="top-actions">
+      <button class="btn btn-quiet" id="logout" type="button">Salir</button>
+      <button class="btn btn-primary" id="add-open" type="button">Añadir web</button>
+    </div>
+  </header>
+
+  <div id="layout" class="layout">
+    <section aria-label="Webs con copia">
+      <div class="sites" id="sites"></div>
+      <div class="ribbon-legend" aria-hidden="true">
+        <span><i style="background:var(--muted)"></i>Copia diaria</span>
+        <span><i style="background:var(--ink);height:16px"></i>Mensual</span>
+        <span><i style="background:var(--warn)"></i>Antes de restaurar</span>
+        <span><i style="background:var(--line);height:3px;align-self:flex-end"></i>Sin copia</span>
+        <span>Últimos 30 días, el más reciente a la derecha</span>
+      </div>
+    </section>
+    <aside id="detail" class="detail hidden" aria-label="Detalle de la web"></aside>
+  </div>
+</div>
+
+<dialog id="add-dialog" aria-labelledby="add-title">
+  <form id="add-form" method="dialog">
+    <h2 id="add-title">Añadir web</h2>
+    <p class="note" style="margin:0">Instala el plugin NAS Backup Bridge en la web y abre <strong>Ajustes › NAS Backup › Mostrar configuración</strong>.</p>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="true" data-tab="block">Pegar configuración</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="fields">Rellenar a mano</button>
+    </div>
+    <div data-panel="block">
+      <label class="field" for="add-block">Bloque de configuración</label>
+      <textarea id="add-block" rows="6" placeholder='{ "name": "…", "url": "https://…", "secret": "…" }'></textarea>
+    </div>
+    <div data-panel="fields" class="hidden">
+      <label class="field" for="add-url">Dirección de la web</label>
+      <input id="add-url" type="url" placeholder="https://ejemplo.com/">
+      <label class="field" for="add-name">Nombre corto</label>
+      <input id="add-name" type="text" placeholder="ejemplo-com" pattern="[a-z0-9][a-z0-9._-]*">
+      <label class="field" for="add-secret">Clave</label>
+      <input id="add-secret" type="password" autocomplete="off">
+    </div>
+    <label class="check"><input id="add-first" type="checkbox" checked><span>Hacer la primera copia al añadirla</span></label>
+    <p id="add-error" class="form-error hidden"></p>
+    <div class="actions">
+      <button class="btn btn-primary" id="add-submit" type="submit" value="ok">Probar conexión y añadir</button>
+      <button class="btn" type="button" id="add-cancel">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const state = { data: null, selected: null, points: {}, restoreFor: null, openTask: null, timer: null, taskTimer: null };
+
+async function api(method, path, body) {
+  const opt = { method, headers: { "X-NBB-Panel": "1" }, credentials: "same-origin" };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* vacío */ }
+  if (r.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Sesión caducada"); }
+  if (!r.ok) throw new Error((data && data.error) || ("Error " + r.status));
+  return data;
+}
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add("hidden"), 4500);
+}
+
+/* ---- formato ---- */
+const fmtNum = (n) => (n ?? 0).toLocaleString("es-ES");
+function fmtBytes(b) {
+  if (b == null) return "—";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; let v = b;
+  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+  return v.toLocaleString("es-ES", { maximumFractionDigits: v < 10 && i > 0 ? 1 : 0 }) + " " + u[i];
+}
+function toDate(x) { if (!x) return null; if (typeof x === "number") return new Date(x * 1000); return new Date(x); }
+function fmtDate(x, withYear) {
+  const d = toDate(x); if (!d || isNaN(d)) return "—";
+  return d.toLocaleString("es-ES", { day: "numeric", month: "short", year: withYear ? "numeric" : undefined, hour: "2-digit", minute: "2-digit" });
+}
+function relTime(x) {
+  const d = toDate(x); if (!d || isNaN(d)) return "nunca";
+  const s = (Date.now() - d.getTime()) / 1000;
+  if (s < 90) return "hace un momento";
+  if (s < 3600) return "hace " + Math.round(s / 60) + " min";
+  if (s < 86400) return "hace " + Math.round(s / 3600) + " h";
+  const days = Math.floor(s / 86400);
+  if (days === 1) return "ayer a las " + d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+  return "hace " + days + " días";
+}
+const dayKey = (d) => d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+
+function siteHealth(s) {
+  if (s.running) return { cls: "run", text: s.running.kind === "restore" ? "Restaurando…" : "Haciendo copia…" };
+  const lr = s.last_run;
+  if (!lr) return { cls: "", text: "Sin copias todavía" };
+  if (!lr.ok) return { cls: "bad", text: "Falló la última copia" };
+  const age = (Date.now() - toDate(lr.finished)) / 3600000;
+  if (age > 36) return { cls: "warn", text: "Sin copia desde " + relTime(lr.finished) };
+  return { cls: "ok", text: "Copia correcta" };
+}
+
+/* ---- cinta de 30 días ---- */
+function ribbon(s) {
+  const byDay = {};
+  for (const p of s.points || []) {
+    const d = toDate(p.backup_finished); if (!d || isNaN(d)) continue;
+    const k = dayKey(d); (byDay[k] = byDay[k] || []).push(p);
+  }
+  const cells = []; const today = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    const pts = byDay[dayKey(d)] || [];
+    const cls = [];
+    if (pts.length) cls.push("has");
+    if (pts.some(p => p.kind === "monthly")) cls.push("month");
+    else if (pts.some(p => p.kind === "pre")) cls.push("pre");
+    if (i === 0) { cls.push("today"); if (s.last_run && !s.last_run.ok) cls.push("fail"); }
+    const label = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" }) + ": " +
+      (pts.length ? pts.map(p => p.label).join(", ") : "sin copia");
+    cells.push(`<i class="${cls.join(" ")}" title="${esc(label)}"></i>`);
+  }
+  return `<div class="ribbon" role="img" aria-label="Copias de los últimos 30 días">${cells.join("")}</div>`;
+}
+
+/* ---- render ---- */
+function renderSummary() {
+  const sites = state.data.sites;
+  if (!sites.length) { $("#summary").textContent = "Todavía no hay webs con copia."; return; }
+  const bad = sites.filter(s => !s.disabled && ["bad", "warn"].includes(siteHealth(s).cls));
+  const n = sites.length === 1 ? "1 web" : sites.length + " webs";
+  $("#summary").textContent = bad.length
+    ? `${n}. ${bad.length === 1 ? "Una necesita" : bad.length + " necesitan"} atención: ${bad.map(s => s.name).join(", ")}.`
+    : `${n}, todas con copia correcta en las últimas 36 horas.`;
+}
+
+function renderSites() {
+  const el = $("#sites");
+  const sites = state.data.sites;
+  if (!sites.length) {
+    el.innerHTML = `<div class="empty"><strong>Añade tu primera web</strong>Instala el plugin en la web, copia su configuración y pégala aquí.<div class="actions" style="justify-content:center"><button class="btn btn-primary" type="button" data-add>Añadir web</button></div></div>`;
+    $("[data-add]", el).onclick = openAdd;
+    return;
+  }
+  el.innerHTML = `<div class="sites-head" aria-hidden="true"><span>Web</span><span>Última copia</span><span class="h-size">Contenido</span><span>Historial</span><span></span></div>` +
+    sites.map(s => {
+      const h = siteHealth(s); const lr = s.last_run || {};
+      const host = (s.url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+      return `<div class="site ${s.name === state.selected ? "selected" : ""} ${s.disabled ? "disabled" : ""}" data-site="${esc(s.name)}" tabindex="0" role="button" aria-label="Ver ${esc(s.name)}">
+        <div style="min-width:0"><div class="site-name"><span class="dot ${h.cls}" aria-hidden="true"></span><span>${esc(s.name)}</span></div><div class="site-url">${esc(host)}${s.disabled ? " (en pausa)" : ""}</div></div>
+        <div class="when"><strong class="${h.cls === "bad" ? "state-bad" : h.cls === "warn" ? "state-warn" : ""}">${s.running ? esc(h.text) : esc(lr.finished ? relTime(lr.finished) : "Nunca")}</strong><small>${s.running ? "" : esc(h.text)}</small></div>
+        <div class="size"><strong>${fmtBytes(lr.bytes_total)}</strong><small>${lr.files_total != null ? fmtNum(lr.files_total) + " archivos" : ""}</small></div>
+        <div class="ribbon-cell">${ribbon(s)}</div>
+        <div class="row-actions"><button class="btn" type="button" data-backup="${esc(s.name)}" ${s.running || s.disabled ? "disabled" : ""}>Copiar ahora</button></div>
+      </div>`;
+    }).join("");
+  el.querySelectorAll("[data-site]").forEach(row => {
+    row.onclick = (e) => { if (!e.target.closest("button")) select(row.dataset.site); };
+    row.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === row) { e.preventDefault(); select(row.dataset.site); } };
+  });
+  el.querySelectorAll("[data-backup]").forEach(b => b.onclick = () => runBackup(b.dataset.backup));
+}
+
+function siteByName(n) { return state.data.sites.find(s => s.name === n); }
+
+function renderDetail() {
+  const el = $("#detail"); const s = state.selected && siteByName(state.selected);
+  $("#layout").classList.toggle("with-detail", !!s);
+  if (!s) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  const lr = s.last_run; const st = s.status || {}; const h = siteHealth(s);
+  const pts = state.points[s.name];
+  const tasks = state.data.tasks.filter(t => t.site === s.name).slice(0, 6);
+  const alerts = [];
+  if (lr && !lr.ok && lr.error) alerts.push(`<p class="alert">La última copia falló: ${esc(lr.error)}</p>`);
+  for (const w of (lr && lr.warnings) || []) alerts.push(`<p class="alert warn">${esc(w)}</p>`);
+  el.innerHTML = `
+    <div class="detail-head">
+      <div><h2>${esc(s.name)}</h2><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc((s.url || "").replace(/^https?:\/\//, ""))}</a></div>
+      <button class="btn btn-quiet" type="button" id="close-detail" aria-label="Cerrar detalle">Cerrar</button>
+    </div>
+    <div class="section">
+      ${alerts.join("")}
+      <dl class="facts">
+        <dt>Estado</dt><dd>${esc(h.text)}</dd>
+        <dt>Última copia</dt><dd>${lr ? esc(fmtDate(lr.finished, true)) + (lr.duration_s != null ? ", tardó " + Math.round(lr.duration_s) + " s" : "") : "Nunca"}</dd>
+        <dt>Contenido</dt><dd>${lr ? `${fmtBytes(lr.bytes_total)} en ${fmtNum(lr.files_total)} archivos, ${fmtNum(lr.tables)} tablas` : "—"}</dd>
+        <dt>Última noche</dt><dd>${lr && lr.ok ? `${fmtNum(lr.downloaded_files)} archivos nuevos o cambiados, ${fmtNum(lr.deleted_files)} borrados` : "—"}</dd>
+        <dt>WordPress</dt><dd>${esc(st.wp_version || "—")}${st.php_version ? ", PHP " + esc(st.php_version) : ""}</dd>
+        <dt>Plugin</dt><dd>${esc(st.plugin_version || "—")}</dd>
+        <dt>Restauraciones</dt><dd>${st.restore_allowed ? "Permitidas" : "No permitidas en la web"}</dd>
+        ${s.last_restore ? `<dt>Última restauración</dt><dd>${esc(fmtDate(s.last_restore.finished, true))} ${s.last_restore.ok ? "" : "(falló)"}</dd>` : ""}
+      </dl>
+      <div class="actions">
+        <button class="btn btn-primary" type="button" id="d-backup" ${s.running || s.disabled ? "disabled" : ""}>Copiar ahora</button>
+        <button class="btn" type="button" id="d-check">Probar conexión</button>
+        <button class="btn btn-quiet" type="button" id="d-toggle">${s.disabled ? "Reanudar copias" : "Pausar copias"}</button>
+        <button class="btn btn-quiet" type="button" id="d-remove">Quitar de la lista</button>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Puntos de restauración</h3>
+      ${pts ? renderPoints(s, pts) : `<p class="note">Cargando…</p>`}
+    </div>
+    <div class="section">
+      <h3>Actividad</h3>
+      ${tasks.length ? `<ul class="tasks">${tasks.map(t => `<li><button type="button" data-task="${esc(t.id)}">${esc(t.title)}</button><span class="${t.status === "error" ? "state-bad" : ""}">${esc(t.status === "running" ? "en curso" : t.status === "ok" ? fmtDate(t.finished) : "falló")}</span></li>`).join("")}</ul>` : `<p class="note">Sin actividad desde el panel. Las copias automáticas nocturnas no aparecen aquí; su resultado se ve arriba.</p>`}
+      <div id="log-wrap" class="${state.openTask ? "" : "hidden"}"><pre class="log" id="log" tabindex="0"></pre></div>
+    </div>`;
+  $("#close-detail").onclick = () => select(null);
+  $("#d-backup").onclick = () => runBackup(s.name);
+  $("#d-check").onclick = () => checkSite(s.name);
+  $("#d-toggle").onclick = () => toggleSite(s);
+  $("#d-remove").onclick = () => removeSite(s.name);
+  el.querySelectorAll("[data-task]").forEach(b => b.onclick = () => openTask(b.dataset.task));
+  el.querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { state.restoreFor = state.restoreFor === b.dataset.restore ? null : b.dataset.restore; renderDetail(); });
+  const rf = $("#restore-form"); if (rf) bindRestoreForm(rf, s);
+  if (state.openTask) refreshLog();
+}
+
+function renderPoints(s, pts) {
+  if (!pts.length) return `<p class="note">Todavía no hay copias guardadas de esta web.</p>`;
+  const canRestore = s.status && s.status.restore_allowed;
+  return `<ul class="points">${pts.map(p => {
+    const dl = (part, label) => `<a href="/api/sites/${encodeURIComponent(s.name)}/download?point=${encodeURIComponent(p.id)}&part=${part}">${label}</a>`;
+    const open = state.restoreFor === p.id;
+    return `<li class="point">
+      <div class="point-row">
+        <div>
+          <div class="point-date">${esc(fmtDate(p.backup_finished, true))}<span class="tag ${esc(p.kind)}">${esc(p.label)}</span></div>
+          <div class="point-meta">${fmtBytes(p.bytes)}, ${fmtNum(p.files)} archivos, ${fmtNum(p.tables)} tablas, WordPress ${esc(p.wp_version || "?")}</div>
+          <div class="downloads">Descargar: ${dl("db", "base de datos")}${dl("files", "archivos")}${dl("all", "todo")}</div>
+        </div>
+        <button class="btn" type="button" data-restore="${esc(p.id)}" ${s.running ? "disabled" : ""} aria-expanded="${open}">${open ? "Cancelar" : "Restaurar…"}</button>
+      </div>
+      ${open ? restoreFormHtml(s, p, canRestore) : ""}
+    </li>`;
+  }).join("")}</ul>`;
+}
+
+function restoreFormHtml(s, p, canRestore) {
+  if (!canRestore) return `<div class="restore-form"><p class="alert warn" style="margin:0">La web no permite restauraciones. Actívalas en <strong>Ajustes › NAS Backup</strong> de la web y pulsa «Probar conexión». Mientras tanto puedes descargar la copia y restaurarla a mano.</p></div>`;
+  return `<form class="restore-form" id="restore-form" data-point="${esc(p.id)}">
+    <fieldset><legend>Qué restaurar</legend>
+      <label class="check"><input type="checkbox" name="db" checked><span>Base de datos<small>Entradas, páginas, pedidos, usuarios y ajustes vuelven al ${esc(fmtDate(p.backup_finished, true))}.</small></span></label>
+      <label class="check"><input type="checkbox" name="files" checked><span>Archivos<small>Temas, plugins y medios. Solo se suben los que han cambiado.</small></span></label>
+    </fieldset>
+    <fieldset><legend>Opciones</legend>
+      <label class="check"><input type="checkbox" name="pre_backup" checked><span>Hacer una copia antes<small>Guarda el estado actual como punto «Antes de restaurar» para poder deshacer.</small></span></label>
+      <label class="check"><input type="checkbox" name="delete_extra" checked><span>Borrar archivos que no estaban en la copia<small>Útil tras un hackeo o una actualización fallida. Las cachés no se tocan.</small></span></label>
+      <label class="check"><input type="checkbox" name="maintenance" checked><span>Página de mantenimiento para visitantes<small>Mientras dura; tú sigues viendo la web si tienes sesión iniciada.</small></span></label>
+      <label class="check"><input type="checkbox" name="wp_config"><span>Restaurar también wp-config.php<small>Solo si no han cambiado las claves de la base de datos del hosting.</small></span></label>
+    </fieldset>
+    <label class="field" for="confirm">Escribe <strong>${esc(s.name)}</strong> para confirmar</label>
+    <input id="confirm" name="confirm" type="text" autocomplete="off" spellcheck="false">
+    <p class="form-error hidden" id="restore-error"></p>
+    <div class="actions"><button class="btn btn-danger" type="submit" disabled>Restaurar ${esc(s.name)}</button></div>
+    <p class="note">La web sigue funcionando mientras se preparan los datos; la base de datos se cambia de golpe al final.</p>
+  </form>`;
+}
+
+function bindRestoreForm(f, s) {
+  const btn = $("button[type=submit]", f);
+  const sync = () => { btn.disabled = f.confirm.value.trim() !== s.name || (!f.db.checked && !f.files.checked); };
+  f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
+  f.onsubmit = async (e) => {
+    e.preventDefault(); btn.disabled = true;
+    const body = { point: f.dataset.point, confirm: f.confirm.value.trim() };
+    for (const k of ["db", "files", "pre_backup", "delete_extra", "maintenance", "wp_config"]) body[k] = f[k].checked;
+    try {
+      const t = await api("POST", `/api/sites/${encodeURIComponent(s.name)}/restore`, body);
+      state.restoreFor = null; toast("Restauración en marcha. Puedes seguir el registro abajo.");
+      await refresh(); openTask(t.id);
+    } catch (err) { const pe = $("#restore-error"); pe.textContent = err.message; pe.classList.remove("hidden"); btn.disabled = false; }
+  };
+}
+
+/* ---- acciones ---- */
+async function select(name) {
+  state.selected = name; state.restoreFor = null; state.openTask = null;
+  renderSites(); renderDetail();
+  if (name) {
+    try { state.points[name] = await api("GET", `/api/sites/${encodeURIComponent(name)}/points`); renderDetail(); }
+    catch (e) { toast(e.message); }
+    const running = siteByName(name)?.running; if (running) openTask(running.id);
+  }
+}
+async function runBackup(name) {
+  try { const t = await api("POST", `/api/sites/${encodeURIComponent(name)}/backup`); toast("Copia de " + name + " en marcha."); await refresh(); if (state.selected === name) openTask(t.id); }
+  catch (e) { toast(e.message); }
+}
+async function checkSite(name) {
+  try { const r = await api("POST", `/api/sites/${encodeURIComponent(name)}/check`); toast(`Conexión correcta: WordPress ${r.wp_version}, plugin ${r.plugin_version}.`); await refresh(); }
+  catch (e) { toast("No conecta: " + e.message); }
+}
+async function toggleSite(s) {
+  try { await api("POST", `/api/sites/${encodeURIComponent(s.name)}/${s.disabled ? "enable" : "disable"}`); toast(s.disabled ? "Copias reanudadas." : "Copias en pausa: la copia nocturna se salta esta web."); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+async function removeSite(name) {
+  if (!confirm(`¿Quitar ${name} de la lista? Dejará de copiarse cada noche. Las copias ya guardadas no se borran.`)) return;
+  try { await api("DELETE", `/api/sites/${encodeURIComponent(name)}`); state.selected = null; toast(name + " quitada de la lista."); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+function openTask(id) { state.openTask = id; renderDetail(); }
+async function refreshLog() {
+  clearTimeout(state.taskTimer);
+  if (!state.openTask) return;
+  try {
+    const t = await api("GET", `/api/tasks/${state.openTask}`);
+    const log = $("#log"); if (!log) return;
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+    log.textContent = (t.log || []).join("") || "Esperando salida…";
+    if (atBottom) log.scrollTop = log.scrollHeight;
+    if (t.status === "running") state.taskTimer = setTimeout(refreshLog, 2000);
+    else if (siteByName(t.site)?.running) refresh();
+  } catch (e) { /* la siguiente actualización lo reintenta */ }
+}
+
+/* ---- añadir web ---- */
+function openAdd() {
+  const d = $("#add-dialog"); $("#add-error").classList.add("hidden"); $("#add-form").reset(); setTab("block"); d.showModal();
+}
+function setTab(name) {
+  document.querySelectorAll("#add-dialog [role=tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  document.querySelectorAll("#add-dialog [data-panel]").forEach(p => p.classList.toggle("hidden", p.dataset.panel !== name));
+}
+$("#add-open").onclick = openAdd;
+$("#add-cancel").onclick = () => $("#add-dialog").close();
+document.querySelectorAll("#add-dialog [role=tab]").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$("#add-url").addEventListener("input", (e) => {
+  const n = $("#add-name"); if (n.dataset.touched) return;
+  n.value = e.target.value.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").replace(/\./g, "-").toLowerCase();
+});
+$("#add-name").addEventListener("input", (e) => e.target.dataset.touched = "1");
+$("#add-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const blockMode = $("[data-tab=block]").getAttribute("aria-selected") === "true";
+  const body = { first_backup: $("#add-first").checked };
+  if (blockMode) body.block = $("#add-block").value.trim();
+  else Object.assign(body, { url: $("#add-url").value.trim(), name: $("#add-name").value.trim(), secret: $("#add-secret").value.trim() });
+  const btn = $("#add-submit"); btn.disabled = true; btn.textContent = "Probando conexión…";
+  try {
+    const r = await api("POST", "/api/sites", body);
+    $("#add-dialog").close(); toast(`${r.name} añadida (WordPress ${r.wp_version}).`); await refresh(); select(r.name);
+  } catch (err) { const pe = $("#add-error"); pe.textContent = err.message; pe.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Probar conexión y añadir"; }
+};
+
+/* ---- sesión y ciclo ---- */
+function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); clearTimeout(state.timer); $("#pw").focus(); }
+$("#login-form").onsubmit = async (e) => {
+  e.preventDefault(); const pe = $("#login-error"); pe.classList.add("hidden");
+  try { await api("POST", "/api/login", { password: $("#pw").value }); $("#pw").value = ""; start(); }
+  catch (err) { pe.textContent = err.message; pe.classList.remove("hidden"); }
+};
+$("#logout").onclick = async () => { await api("POST", "/api/logout").catch(() => {}); showLogin(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.selected && !$("#add-dialog").open) select(null); });
+
+async function refresh() {
+  clearTimeout(state.timer);
+  try {
+    state.data = await api("GET", "/api/state");
+    renderSummary(); renderSites();
+    if (state.selected && !siteByName(state.selected)) state.selected = null;
+    const active = document.activeElement;
+    const typing = active && (active.closest("#restore-form") || active.id === "log");
+    if (!typing) renderDetail();
+    const running = state.data.sites.some(s => s.running);
+    state.timer = setTimeout(refresh, running ? 4000 : 20000);
+  } catch (e) { if (e.message !== "Sesión caducada") state.timer = setTimeout(refresh, 15000); }
+}
+async function start() {
+  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); await refresh();
+}
+(async () => {
+  const s = await api("GET", "/api/session").catch(() => ({ authenticated: false }));
+  if (s.authenticated) start(); else showLogin();
+  if (s.configured === false) { const pe = $("#login-error"); pe.textContent = "Falta fijar la contraseña: ejecuta «nbb_panel.py set-password» en el NAS."; pe.classList.remove("hidden"); }
+})();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@ Contributors: chrislund
 Requires at least: 5.6
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 
 Copias completas del sitio (base de datos + archivos) descargadas por un servidor de copias propio mediante una API firmada con HMAC.

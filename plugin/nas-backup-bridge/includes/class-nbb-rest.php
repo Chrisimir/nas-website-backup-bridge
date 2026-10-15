@@ -89,6 +89,28 @@ class NBB_Rest {
 				'permission_callback' => $auth,
 			)
 		);
+		$restore = array(
+			'/restore'                        => 'start',
+			'/restore/' . self::ID . '/sql'    => 'sql',
+			'/restore/' . self::ID . '/swap'   => 'swap',
+			'/restore/' . self::ID . '/pack'   => 'pack',
+			'/restore/' . self::ID . '/chunk'  => 'chunk',
+			'/restore/' . self::ID . '/delete' => 'delete',
+			'/restore/' . self::ID . '/mkdir'  => 'mkdir',
+			'/restore/' . self::ID . '/finish' => 'finish',
+			'/restore/' . self::ID . '/abort'  => 'abort',
+		);
+		foreach ( $restore as $route => $method ) {
+			register_rest_route(
+				self::NS,
+				$route,
+				array(
+					'methods'             => 'POST',
+					'callback'            => array( 'NBB_Restore', $method ),
+					'permission_callback' => $auth,
+				)
+			);
+		}
 		register_rest_route(
 			self::NS,
 			'/pack',
@@ -122,11 +144,36 @@ class NBB_Rest {
 			'active_job'         => $active,
 			'last_job'           => get_option( NBB_Settings::OPT_LAST, null ),
 			'server_time'        => time(),
+			'restore_allowed'    => NBB_Restore::allowed(),
+			'last_restore'       => get_option( NBB_Restore::OPT_LAST, null ),
+			'max_body'           => self::max_body(),
+			'plugin_path'        => self::plugin_path(),
 		);
 	}
 
+	/** Largest request body PHP will accept (bytes), or 0 if unknown. */
+	private static function max_body() {
+		$post = wp_convert_hr_to_bytes( (string) ini_get( 'post_max_size' ) );
+		return $post > 0 ? $post : 0;
+	}
+
+	/** Where this plugin lives, as {r, p}, so the NAS never overwrites or deletes it. */
+	private static function plugin_path() {
+		$dir = NBB_Util::norm_dir( realpath( NBB_DIR ) );
+		foreach ( NBB_Scanner::roots() as $id => $root ) {
+			$base = NBB_Util::norm_dir( realpath( $root['path'] ) );
+			if ( null === $root['only'] && NBB_Util::is_inside( $dir, $base ) ) {
+				return array(
+					'r' => $id,
+					'p' => ltrim( substr( $dir, strlen( $base ) ), '/' ),
+				);
+			}
+		}
+		return null;
+	}
+
 	public static function create_job( WP_REST_Request $request ) {
-		$job = NBB_Job::create( (bool) $request->get_param( 'force' ) );
+		$job = NBB_Job::create( (bool) $request->get_param( 'force' ), (bool) $request->get_param( 'skip_db' ) );
 		if ( is_wp_error( $job ) ) {
 			return $job;
 		}

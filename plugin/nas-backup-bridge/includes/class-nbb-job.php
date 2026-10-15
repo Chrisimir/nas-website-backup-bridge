@@ -86,7 +86,7 @@ class NBB_Job {
 	 * @param bool $force Replace a running job.
 	 * @return NBB_Job|WP_Error
 	 */
-	public static function create( $force = false ) {
+	public static function create( $force = false, $skip_db = false ) {
 		foreach ( self::all() as $job ) {
 			if ( $job->is_active() && ! $force ) {
 				return new WP_Error( 'nbb_busy', 'Ya hay una copia en curso.', array( 'status' => 409, 'job' => $job->id() ) );
@@ -104,7 +104,9 @@ class NBB_Job {
 			'updated' => $now,
 			'phase'   => 'db',
 			'steps'   => 0,
-			'db'      => NBB_Db_Dumper::init_state( NBB_Settings::all_tables() ),
+			'db'      => $skip_db
+				? array( 'tables' => array(), 'views' => array(), 'idx' => 0, 'cur' => null, 'rows' => 0, 'done' => true )
+				: NBB_Db_Dumper::init_state( NBB_Settings::all_tables() ),
 			'scan'    => NBB_Scanner::init_state(),
 			'error'   => null,
 		);
