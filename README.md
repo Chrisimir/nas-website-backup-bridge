@@ -2,7 +2,7 @@
 
 Copias de seguridad completas de WordPress (base de datos + archivos) descargadas por el NAS de casa, con un **panel web** para ver el estado de cada web, hacer copias al momento, añadir webs, descargar copias y **restaurarlas**. Funciona en hostings que no controlo: solo hace falta poder instalar un plugin.
 
-Versión 1.1.0 (plugin) — ver [Novedades 1.1](#novedades-11).
+Versión 1.2.0 (plugin): actualizaciones automáticas desde este repositorio — ver [Actualizaciones](#actualizaciones-del-plugin-desde-12) y [Novedades 1.1](#novedades-11).
 
 ```
  WordPress del cliente                         NAS (TrueNAS, cron 03:00)
@@ -138,6 +138,16 @@ Cada tabla empieza con `DROP TABLE IF EXISTS` + `CREATE TABLE`. Para restaurar s
 | Preparación muy lenta / muchos pasos | `max_execution_time` bajo en el hosting (se ve con `check`). Funciona igual, solo tarda más. |
 | `scan_errors` en `meta.json` | Carpetas/archivos sin permiso de lectura para PHP: corregir permisos en el hosting o excluirlos. |
 | Aviso "carpeta de trabajo dentro de la raíz web" | El hosting no permite escribir fuera de la web. Con Apache/LiteSpeed está protegida por `.htaccess`; con Nginx, comprobar que `/wp-content/uploads/nbb-*/` no se sirve. |
+
+## Actualizaciones del plugin (desde 1.2)
+
+Las webs se actualizan solas desde este repositorio público, como cualquier plugin de wordpress.org: aparece «Hay una nueva versión» en *Plugins* y se actualiza con un clic (o automáticamente si activas *Activar actualizaciones automáticas* en la fila del plugin).
+
+- El plugin lee [`releases/latest.json`](releases/latest.json) cada 6 h y, antes de instalar, comprueba el **SHA-256** del zip: si no coincide, no se instala.
+- La 1.2.0 hay que instalarla a mano una vez (subir el zip → «Reemplazar la actual»); a partir de ahí, automático.
+- Desactivar en una web: `define( 'NBB_DISABLE_UPDATES', true );` en `wp-config.php`.
+
+**Publicar una versión**: subir la versión en `nas-backup-bridge.php` (cabecera y `NBB_VERSION`) y en `readme.txt`, ejecutar `scripts/release.sh "cambios"` y hacer commit + push de `releases/`. Las webs la verán en unas horas.
 
 ## Novedades 1.1
 

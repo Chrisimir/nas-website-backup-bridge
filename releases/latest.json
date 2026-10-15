@@ -1,0 +1,9 @@
+{
+  "version": "1.2.0",
+  "package": "https://raw.githubusercontent.com/Chrisimir/nas-website-backup-bridge/main/releases/nas-backup-bridge-1.2.0.zip",
+  "sha256": "0527bc23feb2fac4c9219d3e29a845ea1d4bbe297788c84a1b9d65d1ba6a479a",
+  "requires": "5.6",
+  "requires_php": "7.4",
+  "tested": "7.1",
+  "changelog": "1.2.0: actualizaciones automáticas desde GitHub (verificadas con SHA-256). 1.1.0: restauración directa desde el NAS y panel web."
+}
