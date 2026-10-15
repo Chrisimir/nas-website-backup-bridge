@@ -41,6 +41,6 @@ Verificar restauraciones con `CHECKSUM TABLE` y `diff -r`. Pruebas hechas: ver �
 
 1. Subir `Version:` y `NBB_VERSION` en `nas-backup-bridge.php` y `Stable tag` en `readme.txt`.
 2. `cd plugin && zip -r ../dist/nas-backup-bridge-X.Y.Z.zip nas-backup-bridge`
-3. Commit + tag `vX.Y.Z` + release en GitHub con el zip adjunto.
+3. Copiar el zip a `releases/`, commit y push (los tags no pasan por el proxy de las sesiones de Claude; si se quiere una release en GitHub, crearla desde la web con el tag `vX.Y.Z`).
 4. En cada web: Plugins › Añadir › Subir → «Reemplazar la actual». En el NAS: copiar `nas/*` a `/mnt/apps/config/nbb/` y `systemctl restart nbb-panel`.
 
